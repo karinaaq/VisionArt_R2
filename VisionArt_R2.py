@@ -4,7 +4,7 @@ import numpy as np
 import random as rnd 
 import sys
 import serial
-import time
+from time import time, sleep
 
 ################################################################################ 
 ####################### Identificador de Formas ################################
@@ -30,15 +30,10 @@ class ShapeDetector:
         else:
             if len(approx) == 6:
                 shape = 'Indicador'
-            #elif len(approx) == 7:
-            #    shape = 'Flecha'
+            elif len(approx) == 10:
+                shape = 'Estrella'
             else:
-                if len(approx) == 10:
-                    shape = 'Estrella'
-                elif len(approx) == 12:
-                    shape = 'Cruz'
-                else:
-                    shape = 'Circulo'
+                shape = 'Circulo'
         return shape
 
  
@@ -67,7 +62,7 @@ def list2string(list):
 
 framewidth = 640
 frameheight = 480
-cap = cv2.VideoCapture("video.mp4")
+cap = cv2.VideoCapture("video3.mp4")
 cap.set(3, framewidth)
 cap.set(4, frameheight)
 
@@ -79,9 +74,9 @@ def empty(a):
     pass
 cv2.namedWindow("Parameters")
 cv2.resizeWindow("Parameters", 640, 240)
-cv2.createTrackbar("Threshold1", "Parameters", 125, 255, empty)
-cv2.createTrackbar("Threshold2", "Parameters", 96, 255, empty)
-cv2.createTrackbar("Area Minima", "Parameters", 2000, 30000, empty)
+cv2.createTrackbar("Threshold1", "Parameters", 200, 255, empty)
+cv2.createTrackbar("Threshold2", "Parameters", 200, 255, empty)
+cv2.createTrackbar("Area Minima", "Parameters", 1700, 30000, empty)
 ## Juntar imágenes en
 def stackImages(scale,imgArray):
     rows = len(imgArray)
@@ -114,33 +109,20 @@ def stackImages(scale,imgArray):
         ver = hor
     return ver
 
-
 ################################################################################ 
-####################### Filtros y salidas ######################################
+############################## Contornos  ######################################
 ################################################################################
-info_normal = []
-info_ascii = []
-sd = ShapeDetector()
-while True:
-    ret, img = cap.read()
-    ratio = img.shape[0] / float(img.shape[0])
-    imgContour = img.copy()
-    imgblur = cv2.GaussianBlur(img, (7,7), 1)
-    imgGray = cv2.cvtColor(imgblur, cv2.COLOR_BGR2GRAY)
-    threshold1 = cv2.getTrackbarPos("Threshold1", "Parameters")
-    threshold2 = cv2.getTrackbarPos("Threshold2", "Parameters")
-    imgCanny = cv2.Canny(imgGray, threshold1, threshold2)
-    kernel = np.ones((5,5))
-    imgDil = cv2.dilate(imgCanny, kernel, iterations = 1)
 
-    contours, hier = cv2.findContours(imgDil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+
+def getContours(imgDil, img):
+    contours, hier = cv2.findContours(imgDil, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     for c in contours:
         #centro del contorno, luego detecta la forma
         M = cv2.moments(c)
         #Coord de la figura
         cX = int( (M["m10"] / M["m00"]) * ratio)
-        cY = int( (M["m01"] / M["m00"]) * ratio)
+        cY = int ( (M["m01"] / M["m00"]) * ratio)
         area = cv2.contourArea(c)
         areaMin = cv2.getTrackbarPos("Area Minima", "Parameters")
         if area > areaMin:
@@ -153,17 +135,47 @@ while True:
             cv2.putText(img, shape, (cX, cY), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2)
             info_normal.append([shape, (cX, cY)])
             info_ascii.append([text2ASCII(shape), (chr(cX), chr(cY))])
-
-    img_stacked = stackImages(0.2,([img,imgblur,imgCanny]))
-    cv2.imshow("Titulo", img_stacked)
-
-    while(True):
-        k = cv2.waitKey(0)
-        if k==27:
-            break
-
-    ser_ascii = [ ( str(info_ascii[j][0]) +','+ str(info_ascii[j][1]) +';') for j in range(len(info_ascii)) ]
-    print('Identificador y Par de coordenadas:\n\t', ser_ascii)
+    ser_ascii = [ str(info_ascii) +','+ str(info_ascii) +';']
     ser_ascii = list2string(ser_ascii) # Coordenadas concatenadas
+    print('Identificador y Par de coordenadas:\n\t', ser_ascii)
     print('Informacion Concatenadas:\n\t' + ser_ascii)
     print('Tamaño de la cadena ASCII: {} bytes '.format(sys.getsizeof(ser_ascii)))
+    info_ascii.clear()
+
+################################################################################ 
+####################### Filtros y salidas ######################################
+################################################################################
+def checkDuplicate(lista):
+    if len(lista)==len(set(lista)): # False si hay repetido
+        return False
+    else:
+        return True
+
+info_normal = []
+info_ascii = []
+cont = 0
+sd = ShapeDetector()
+while True:
+    ret, img = cap.read()
+    ratio = img.shape[0] / float(img.shape[0])
+    imgContour = img.copy()
+    imgGray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    imgblur = cv2.GaussianBlur(imgGray, (7,7), 0)
+    
+    threshold1 = cv2.getTrackbarPos("Threshold1", "Parameters")
+    threshold2 = cv2.getTrackbarPos("Threshold2", "Parameters")
+    imgCanny = cv2.Canny(imgblur, threshold1, threshold2)
+    kernel = np.ones((5,5))
+    imgDil = cv2.dilate(imgCanny, kernel, iterations = 1)
+    thresh = cv2.threshold(imgDil,150, 255, cv2.THRESH_BINARY)[1]
+    getContours(thresh, imgContour)
+    img_stacked = stackImages(0.5,([img,imgContour,imgCanny], [imgDil, thresh, thresh]))
+    cv2.imshow("Titulo", img_stacked)
+
+    #ser_ascii = [ ( str(info_ascii[j][0]) +','+ str(info_ascii[j][1]) +';') for j in range(len(info_ascii)) ]  
+    cont += 1
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+        
+    #sleep(0.5 - time() % 0.5) # Esto es para que haga todo cada medio segundo!!!
+    
